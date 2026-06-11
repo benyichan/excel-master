@@ -267,10 +267,29 @@ def _apply_styles(ws, df: pd.DataFrame, theme: str = 'default', fmt_override: Op
     ncols = len(df.columns)
     start_col = 2         # B 列
 
-    # 1. 行高 + A列宽
+    # 1. 行高 + A列宽 + A列格式（如果A列有数据）
     for r in range(1, nrows + 1):
         ws.row_dimensions[r].height = ROW_HEIGHT
-    ws.column_dimensions['A'].width = A_COL_WIDTH
+    a_has_data = any(ws.cell(row=r, column=1).value is not None for r in range(2, nrows + 1))
+    if a_has_data:
+        a_max = _char_width(str(ws.cell(row=1, column=1).value or ''))
+        for r in range(2, nrows + 1):
+            v = ws.cell(row=r, column=1).value
+            if v is not None:
+                w = _char_width(str(v))
+                if w > a_max:
+                    a_max = w
+        ws.column_dimensions['A'].width = max(MIN_COL_WIDTH, min(a_max + 2, MAX_COL_WIDTH))
+        # A列表头 + 数据格式（统一文本，左对齐）
+        ws.cell(row=1, column=1).font = s['header_font']
+        ws.cell(row=1, column=1).fill = s['header_fill']
+        ws.cell(row=1, column=1).alignment = HDR_ALIGN
+        for r in range(2, nrows + 1):
+            cell = ws.cell(row=r, column=1)
+            cell.font = Font(name='Arial', size=11)
+            cell.alignment = LEFT_ALIGN
+    else:
+        ws.column_dimensions['A'].width = A_COL_WIDTH
 
     # 2. 列宽估算 + 类型推断（一次扫描）
     col_types = {}
@@ -323,6 +342,16 @@ def _apply_styles(ws, df: pd.DataFrame, theme: str = 'default', fmt_override: Op
         col = ci + start_col
         for ri in range(1, nrows + 1):
             cell = ws.cell(row=ri, column=col)
+            if ri == 1:
+                cell.border = TOP_BORDER
+            elif ri == nrows:
+                cell.border = BOTTOM_BORDER
+            else:
+                cell.border = MID_BORDER
+    # A列边框（如果有数据）
+    if a_has_data:
+        for ri in range(1, nrows + 1):
+            cell = ws.cell(row=ri, column=1)
             if ri == 1:
                 cell.border = TOP_BORDER
             elif ri == nrows:
@@ -545,16 +574,29 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     for r in range(header_row, data_end + 1):
         ws.row_dimensions[r].height = ROW_HEIGHT
     a_max = _char_width(str(ws.cell(row=header_row, column=1).value or ''))
+    a_has_data = False
     for r in range(data_start, data_end + 1):
         v = ws.cell(row=r, column=1).value
         if v is not None:
+            a_has_data = True
             try:
                 w = _char_width(str(v))
                 if w > a_max:
                     a_max = w
             except Exception:
                 pass
-    ws.column_dimensions['A'].width = max(A_COL_WIDTH, min(a_max + 2, MAX_COL_WIDTH))
+    if a_has_data:
+        ws.column_dimensions['A'].width = max(MIN_COL_WIDTH, min(a_max + 2, MAX_COL_WIDTH))
+        # A列表头 + 数据格式
+        ws.cell(row=header_row, column=1).font = s['header_font']
+        ws.cell(row=header_row, column=1).fill = s['header_fill']
+        ws.cell(row=header_row, column=1).alignment = HDR_ALIGN
+        for r in range(data_start, data_end + 1):
+            cell = ws.cell(row=r, column=1)
+            cell.font = Font(name='Arial', size=11)
+            cell.alignment = LEFT_ALIGN
+    else:
+        ws.column_dimensions['A'].width = A_COL_WIDTH
 
     # 2. 列宽估算 + 类型推断（支持手动覆盖）
     col_types = {}
@@ -626,6 +668,16 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     for c in range(start_col, end_col + 1):
         for ri, r in enumerate(range(header_row, data_end + 1)):
             cell = ws.cell(row=r, column=c)
+            if ri == 0:
+                cell.border = TOP_BORDER
+            elif ri == data_rows - 1:
+                cell.border = BOTTOM_BORDER
+            else:
+                cell.border = MID_BORDER
+    # A列边框（如果有数据）
+    if a_has_data:
+        for ri, r in enumerate(range(header_row, data_end + 1)):
+            cell = ws.cell(row=r, column=1)
             if ri == 0:
                 cell.border = TOP_BORDER
             elif ri == data_rows - 1:
