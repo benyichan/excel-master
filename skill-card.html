@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>excel-master</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Noto+Sans+SC:wght@200;300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden}
+  body{
+    background:#0a0a0a;
+    display:flex;justify-content:center;align-items:center;
+    font-family:"Inter","Helvetica Neue","Noto Sans SC","Microsoft YaHei UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .slide{
+    width:1280px;height:720px;
+    background:#0a0a0a;
+    position:relative;
+    overflow:hidden;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:0 6vw;
+  }
+
+  /* accent bar */
+  .slide::before{
+    content:'';position:absolute;top:0;left:6vw;right:6vw;height:3px;
+    background:#002FA7;
+  }
+
+  /* decorative ring */
+  .ring{
+    position:absolute;
+    right:-12vw;top:50%;transform:translateY(-50%);
+    width:42vw;height:42vw;
+    border:1px solid rgba(255,255,255,.04);
+    border-radius:50%;
+  }
+  .ring2{
+    position:absolute;
+    right:-6vw;top:50%;transform:translateY(-50%);
+    width:30vw;height:30vw;
+    border:1px solid rgba(255,255,255,.025);
+    border-radius:50%;
+  }
+
+  .tag{
+    font-family:"JetBrains Mono",monospace;
+    font-size:13px;font-weight:500;
+    letter-spacing:.18em;text-transform:uppercase;
+    color:#002FA7;
+    margin-bottom:32px;
+  }
+
+  .title{
+    font-size:min(5.6vw,96px);
+    font-weight:200;letter-spacing:-.03em;
+    color:#fafaf8;
+    line-height:1;
+  }
+  .title em{
+    font-style:italic;
+    font-weight:300;
+    color:#5B7BFF;
+  }
+
+  .subtitle{
+    font-size:min(1.3vw,22px);
+    font-weight:300;
+    color:rgba(250,250,248,.55);
+    margin-top:24px;
+    line-height:1.5;
+  }
+
+  .meta{
+    position:absolute;
+    bottom:48px;left:6vw;right:6vw;
+    display:flex;justify-content:space-between;
+    align-items:center;
+    font-family:"JetBrains Mono",monospace;
+    font-size:12px;font-weight:400;
+    color:rgba(250,250,248,.3);
+    letter-spacing:.03em;
+    border-top:1px solid rgba(255,255,255,.08);
+    padding-top:16px;
+  }
+  .meta a{
+    color:rgba(255,255,255,.4);
+    text-decoration:none;
+  }
+  .meta a:hover{color:#5B7BFF}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="ring"></div>
+  <div class="ring2"></div>
+  <div class="tag">Hermes Agent Skill · data-science</div>
+  <div class="title">excel-<em>master</em></div>
+  <div class="subtitle">摩根士丹利标准格式 Excel 报表生成器 · 6 套色系主题</div>
+  <div class="meta">
+    <span>make_excel / beautify · pure openpyxl</span>
+    <a href="https://github.com/benyichan/excel-master">github.com/benyichan/excel-master</a>
+  </div>
+</div>
+</body>
+</html>

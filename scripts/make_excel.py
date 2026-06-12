@@ -57,7 +57,7 @@ SUM_FILL = PatternFill(start_color='D9E2F3', end_color='D9E2F3', fill_type='soli
 SUM_FONT = Font(name='Arial', size=11, bold=True)
 
 # 合计行关键词（当最后一行的首列文本匹配时，视为合计行）
-SUM_KEYWORDS = ('合计', '小计', '总计', 'sum', 'total', '小計', '合計')
+SUM_KEYWORDS = ('合计', '小计', '总计', '汇总', 'sum', 'total', 'subtotal', '小計', '合計')
 
 # 数据对齐
 LEFT_ALIGN = Alignment(horizontal='left', vertical='center')
@@ -167,7 +167,7 @@ def _validate_theme(theme_name: str):
 def _build_theme_styles(theme_name: str):
     """根据主题名构建 PatternFill / Font 对象。"""
     _validate_theme(theme_name)  # 保险：二次校验
-    t = THEMES.get(theme_name, THEMES['default'])
+    t = THEMES[theme_name]
     return {
         'header_fill': PatternFill(start_color=t['header_fill'], end_color=t['header_fill'], fill_type='solid'),
         'header_font': Font(name='Arial', size=11, bold=True, color=t['header_font_color']),
@@ -188,13 +188,13 @@ def _infer_column_type(name: str, series: pd.Series) -> str:
 
     # ── 关键词匹配（优先级：pct > date > text > money）──
     # "率"优先检测，避免"毛利率"被 money 关键词误匹配
-    if re.search(r'(率$|占比|百分比|增长率|rate$|ratio$)', n):
+    if re.search(r'(率$|占比|百分比|增长率|利润率|达成率|rate$|ratio$|margin|pct|percent)', n):
         return 'pct'
     if re.search(r'(日期|时间|年月|期间|年份|月份|date|time|year|month)', n):
         return 'date'
     if re.search(r'(编号|id|单号|编码|电话|手机|备注|说明|名称|地址|描述|号码|订单号|负责人|姓名|联系人|部门|岗位|phone|email|code|desc|address)', n):
         return 'text'
-    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|amount|price|cost|revenue|total|budget|expense)', n):
+    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|返点|佣金|折扣|补贴|周转|本金|amount|price|cost|revenue|total|budget|expense|commission|discount|rebate|profit|spending)', n):
         return 'money'
 
     # ── 值特征 ──
@@ -280,14 +280,25 @@ def _apply_styles(ws, df: pd.DataFrame, theme: str = 'default', fmt_override: Op
                 if w > a_max:
                     a_max = w
         ws.column_dimensions['A'].width = max(MIN_COL_WIDTH, min(a_max + 2, MAX_COL_WIDTH))
-        # A列表头 + 数据格式（统一文本，左对齐）
+        # A列表头 + 数据格式（类型推断，右对齐/蓝色）
         ws.cell(row=1, column=1).font = s['header_font']
         ws.cell(row=1, column=1).fill = s['header_fill']
         ws.cell(row=1, column=1).alignment = HDR_ALIGN
+        # A 列类型推断（与 B~K 列一致）
+        _a_col_name = str(df.columns[0]) if len(df.columns) > 0 else ''
+        _a_col_type = _infer_column_type(_a_col_name, df.iloc[:, 0]) if len(df.columns) > 0 else 'unknown'
+        _a_is_num = _a_col_type in ('money', 'number', 'pct')
+        _a_align = RIGHT_ALIGN if _a_is_num else LEFT_ALIGN
+        _a_nf = effective_fmt.get(_a_col_type)
         for r in range(2, nrows + 1):
             cell = ws.cell(row=r, column=1)
-            cell.font = Font(name='Arial', size=11)
-            cell.alignment = LEFT_ALIGN
+            cell.alignment = _a_align
+            if _a_nf:
+                cell.number_format = _a_nf
+            if _a_is_num:
+                cell.font = s['data_font_blue']
+            else:
+                cell.font = Font(name='Arial', size=11)
     else:
         ws.column_dimensions['A'].width = A_COL_WIDTH
 
@@ -359,12 +370,12 @@ def _apply_styles(ws, df: pd.DataFrame, theme: str = 'default', fmt_override: Op
             else:
                 cell.border = MID_BORDER
 
-    # 6. 右侧空白列（宽 3）
+    # 7. 右侧空白列（宽 3）
     last_data_col = start_col + ncols - 1
     right_col = get_column_letter(last_data_col + 1)
     ws.column_dimensions[right_col].width = 3
 
-    # 7. 网格线 + 冻结
+    # 8. 网格线 + 冻结
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = 'A2'
 
@@ -446,7 +457,7 @@ def _detect_data_range(ws):
     跳过列A（索引列通常为空）。
     """
     # 先确定最后一列 — 扫描所有行
-    max_col = 0
+    last_col = 0
     header_row = None
     last_data_row = 0
 
@@ -458,8 +469,8 @@ def _detect_data_range(ws):
         if has_data:
             last_data_row = r
         for cell in row:
-            if cell.value is not None and cell.column > max_col:
-                max_col = cell.column
+            if cell.value is not None and cell.column > last_col:
+                last_col = cell.column
 
     if header_row is None:
         return None  # 空表
@@ -468,7 +479,7 @@ def _detect_data_range(ws):
     data_end = max(last_data_row, data_start - 1)  # 至少包含表头
     # 数据范围从 B 列（2）开始，跳过 A 列
     start_col = 2
-    end_col = max(start_col, max_col)
+    end_col = max(start_col, last_col)
     return header_row, data_start, data_end, start_col, end_col
 
 
@@ -490,13 +501,13 @@ def _infer_col_type_from_ws(header_value, samples):
     n = name.lower()
 
     # 关键词匹配（与 _infer_column_type 一致）
-    if re.search(r'(率$|占比|百分比|增长率|rate$|ratio$)', n):
+    if re.search(r'(率$|占比|百分比|增长率|利润率|达成率|rate$|ratio$|margin|pct|percent)', n):
         return 'pct'
     if re.search(r'(日期|时间|年月|期间|年份|月份|date|time|year|month)', n):
         return 'date'
     if re.search(r'(编号|id|单号|编码|电话|手机|备注|说明|名称|地址|描述|号码|订单号|负责人|姓名|联系人|部门|岗位|phone|email|code|desc|address)', n):
         return 'text'
-    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|amount|price|cost|revenue|total|budget|expense)', n):
+    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|返点|佣金|折扣|补贴|周转|本金|amount|price|cost|revenue|total|budget|expense|commission|discount|rebate|profit|spending)', n):
         return 'money'
 
     if not samples:
@@ -591,10 +602,27 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
         ws.cell(row=header_row, column=1).font = s['header_font']
         ws.cell(row=header_row, column=1).fill = s['header_fill']
         ws.cell(row=header_row, column=1).alignment = HDR_ALIGN
+        # A 列类型推断（与 B~K 列一致）
+        a_header_val = ws.cell(row=header_row, column=1).value
+        a_samples = _sample_ws_column(ws, 1, data_start, data_end)
+        a_ct = _infer_col_type_from_ws(a_header_val, a_samples)
+        a_is_num = a_ct in ('money', 'number', 'pct')
+        a_align = RIGHT_ALIGN if a_is_num else LEFT_ALIGN
+        a_nf = effective_fmt.get(a_ct)
         for r in range(data_start, data_end + 1):
             cell = ws.cell(row=r, column=1)
-            cell.font = Font(name='Arial', size=11)
-            cell.alignment = LEFT_ALIGN
+            cell.alignment = a_align
+            if a_nf:
+                cell.number_format = a_nf
+            if a_is_num:
+                val = cell.value
+                is_formula = (isinstance(val, str) and val.startswith('=')) or cell.data_type == 'f'
+                if is_formula:
+                    cell.font = s['data_font_black']
+                else:
+                    cell.font = s['data_font_blue']
+            else:
+                cell.font = Font(name='Arial', size=11)
     else:
         ws.column_dimensions['A'].width = A_COL_WIDTH
 
@@ -685,15 +713,15 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
             else:
                 cell.border = MID_BORDER
 
-    # 6. 右侧空白列（宽 3）
+    # 7. 右侧空白列（宽 3）
     ncols = end_col - start_col + 1
     last_data_col = start_col + ncols - 1
     right_col = get_column_letter(last_data_col + 1)
     ws.column_dimensions[right_col].width = 3
 
-    # 7. 网格线 + 冻结
+    # 8. 网格线 + 冻结（表头在哪行就冻结在哪行下方）
     ws.sheet_view.showGridLines = False
-    ws.freeze_panes = 'A2'
+    ws.freeze_panes = f'A{header_row + 1}'
 
 
 def beautify(

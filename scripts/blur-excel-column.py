@@ -10,11 +10,11 @@ Example:
     # Blurs column C (用户名) in the screenshot
 
 Dependencies: pywin32, Pillow, openpyxl
+
+注意：本脚本仅 Windows + Microsoft Excel 环境可用（依赖 win32com）。
+如不传 capture_range 参数，默认截图范围为 A1:N15，超出此范围需手动指定。
 """
-import sys, os, time
-from PIL import Image, ImageFilter
-import win32com.client as win32
-from openpyxl import load_workbook
+import sys, os
 
 
 def get_column_ratio(xlsx_path: str, capture_range: str, column_letter: str) -> tuple:
@@ -22,6 +22,16 @@ def get_column_ratio(xlsx_path: str, capture_range: str, column_letter: str) -> 
     Get the x-position ratio of a column within the capture range.
     Returns (x_start_ratio, x_end_ratio).
     """
+    # 延迟导入 win32com，让无 Excel 环境的用户收到友好提示而非崩溃
+    try:
+        import win32com.client as win32
+    except ImportError:
+        print('错误：需要 pywin32 库。请运行: pip install pywin32')
+        sys.exit(1)
+    except AttributeError:
+        print('错误：win32com 初始化失败。请确认已安装 Microsoft Excel。')
+        sys.exit(1)
+
     excel = None
     wb = None
     try:
@@ -46,6 +56,12 @@ def blur_column(screenshot_path: str, output_path: str,
                 x_start_ratio: float, x_end_ratio: float,
                 radius: float = 12):
     """Apply GaussianBlur to a vertical column region in the screenshot."""
+    try:
+        from PIL import Image, ImageFilter
+    except ImportError:
+        print('错误：需要 Pillow 库。请运行: pip install Pillow')
+        sys.exit(1)
+
     img = Image.open(screenshot_path)
     w, h = img.size
     x1 = int(w * x_start_ratio)

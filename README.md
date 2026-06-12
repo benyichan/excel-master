@@ -1,122 +1,81 @@
+<div align="center">
+  <img src="skill-card.png" alt="excel-master skill card" width="800">
+</div>
+
+<br>
+
 # excel-master
 
-**Hermes Agent 技能** — 从 DataFrame 生成摩根士丹利标准格式的 Excel 报表。
+Hermes Agent 技能 —— 从 DataFrame 生成/美化摩根士丹利标准格式的 Excel 报表。
 
-纯 openpyxl，零 xlwings，一次保存线性流程。支持 beautify（保留公式只改格式）、6 套色系主题、自定义数字格式。
+纯 openpyxl，零 xlwings，一次保存。
 
----
+## 这是什么
 
-## 核心能力
+一个 Hermes 技能，安装在 `skills/data-science/excel-master/` 下。AI Agent（大天二）在接到「出个 Excel」「美化报表」「导出 xlsx」等指令时，调用 `make_excel.py` 生成符合《为什么精英都是Excel控》九大原则的格式。
 
-- **make_excel** — DataFrame → 摩根系 Excel（Arial 11、水蓝表头、千分位、框线上下粗中间细、B2起始）
-- **beautify** — 美化已有 Excel，只改格式不改数据，保留公式和值
-- **6 套色系主题** — 水蓝（默认）、深海蓝、墨玉绿、陨石灰蓝、勃艮第红、珊瑚橙
-- **智能类型推断** — 通过列名关键词 + 值采样自动识别 money / number / pct / date / text
-- **手动列类型覆盖** — `col_types` 参数手动指定
-- **自定义数字格式** — `fmt_override` 参数覆盖默认格式
-- **多 sheet 支持** — 单 DataFrame 或 `[(名称, df), ...]` 列表
-- **自动备份** — beautify 原地覆盖前自动备份
-- **A 列自适应** — A 列为空时保底宽 2，有数据时自适应（下限 10 上限 50），格式一视同仁
-- **主题名校验** — 无效主题直接抛 ValueError，不再静默回退
+主要能力：
 
----
-
-## 作为 Hermes Agent 技能使用
-
-### 安装依赖
-
-```bash
-pip install pandas openpyxl>=3.0
-```
-
-### Python API
-
-```python
-from make_excel import make_excel, beautify
-import pandas as pd
-
-# 从零生成
-df = pd.read_csv('data.csv')
-make_excel(df, '报表.xlsx')
-
-# 多 sheet
-make_excel([
-    ('汇总', df_summary),
-    ('明细', df_detail),
-], '报表.xlsx')
-
-# 切换主题
-make_excel(df, '报表-深海蓝.xlsx', theme='deep-navy')
-
-# 自定义数字格式
-make_excel(df, '报表.xlsx', fmt_override={'money': '#,##0.0'})
-
-# 美化已有文件（保留公式）
-beautify('已有报表.xlsx')               # 原地美化，自动备份
-beautify('已有报表.xlsx', '美化后.xlsx')  # 另存美化
-
-# 美化 + 手动指定列类型
-beautify('订单表.xlsx', col_types={'订单号': 'text', '金额': 'money'})
-
-# 美化 + 自定义格式
-beautify('报表.xlsx', fmt_override={'pct': '0.0%'})
-```
-
-### 命令行
-
-```bash
-python make_excel.py 数据.csv 输出.xlsx
-python make_excel.py --beautify 已有报表.xlsx 美化后.xlsx
-python make_excel.py --beautify 已有报表.xlsx 美化后.xlsx --theme coral
-```
-
----
-
-## 作为独立 Python 脚本使用
-
-```bash
-pip install pandas openpyxl>=3.0
-python scripts/make_excel.py data.csv output.xlsx
-```
-
----
+- **make_excel** — 从 DataFrame 生成摩根系标准格式（B2 起写、水蓝表头、千分位、框线上下粗中间细、隐藏网格线）
+- **beautify** — 美化已有 xlsx，只改边框/字体/填充/对齐/数字格式/行高/列宽，不碰单元格的值和公式
+- **6 套色系主题** — 表头/合计行/数据字体颜色一键切换
 
 ## 色系主题
 
-| 主题名 | 表头 | 合计行 | 特点 |
-|--------|------|--------|------|
-| `default` | #4472C4 白字 | #D9E2F3 | 经典水蓝（摩根系默认） |
-| `deep-navy` | #1F4E79 白字 | #D6E4F0 | 更深沉专业 |
-| `jade` | #375623 白字 | #E2EFDA | 清爽自然 |
-| `slate` | #404040 白字 | #D9D9D9 | 现代极简 |
-| `burgundy` | #843C0C 白字 | #FCE4D6 | 暖色调高级感 |
-| `coral` | #D84B4B 白字 | #FDE8E8 | 活泼明亮 |
+| 主题名 | 表头 | 合计行 |
+|--------|------|--------|
+| `default` | 水蓝 `#4472C4` | 浅蓝 `#D9E2F3` |
+| `deep-navy` | 深海蓝 `#1F4E79` | 浅蓝 `#D6E4F0` |
+| `jade` | 墨玉绿 `#375623` | 浅绿 `#E2EFDA` |
+| `slate` | 陨石灰蓝 `#404040` | 浅灰 `#D9D9D9` |
+| `burgundy` | 勃艮第红 `#843C0C` | 浅杏 `#FCE4D6` |
+| `coral` | 珊瑚橙 `#D84B4B` | 浅粉 `#FDE8E8` |
 
----
+## 作为独立脚本使用
 
-## 摩根系 9 大原则
+Hermes 之外的场景也能用这个脚本。环境需要 `pandas` + `openpyxl`：
 
-源自《为什么精英都是Excel控》：
+```bash
+pip install pandas openpyxl
+python make_excel.py 数据.csv 输出.xlsx
+python make_excel.py --beautify 已有报表.xlsx 美化后.xlsx --theme coral
+```
 
-1. 行高 18
-2. 英文字体 Arial，字号统一 11
-3. 数字千分位区隔（#,##0.00）
-4. 项目下细项缩排（需人工处理）
-5. 单位自成一栏（需人工处理）
-6. 同一层级栏宽统一（需人工处理）
-7. 框线上下粗中间细虚线，无竖线
-8. 文字左对齐，数字右对齐，表头全部右对齐
-9. 不从 A1 开始（B2 起始，A 列留空）
+Python import：
 
----
+```python
+from make_excel import make_excel, beautify
 
-## 相关参考
+# 生成
+make_excel(df, '报表.xlsx', theme='deep-navy')
 
-- `references/implementation-checklist.md` — 交付前逐格验证清单
-- `references/type-inference-rules.md` — 列类型推断规则
-- `references/conditional-formatting.md` — openpyxl 条件格式指南
-- `references/excel-screenshot-camera.md` — Excel 照相机截图方案
-- `scripts/blur-excel-column.py` — 截图中打码敏感列
+# 美化已有文件（保留公式）
+beautify('原始表.xlsx', '美化表.xlsx', theme='slate')
+```
+
+## 摩根系九大原则
+
+来自《为什么精英都是Excel控》——行高18、Arial 11、千分位、上下粗框线中间虚线无竖线、数字右对齐文字左对齐、不从A1开始、隐藏网格线、冻结首行。详见 `SKILL.md`。
+
+## 更新日志
+
+### 2026-06-12
+- 修复 beautify 冻结窗格位置错误：freeze_panes 从硬编码 A2 改为跟随表头实际位置
+- 修复 blur-excel-column.py 健壮性：win32com/PIL 改为延迟导入，缺失依赖时友好报错
+- 修复 A 列格式覆盖不全：beautify 和 make_excel 的 A 列数据现在会做类型推断，应用正确的数字格式/对齐/颜色
+- 扩充业务关键词：pct 和 money 类增加返点/佣金/折扣/补贴/commission/discount/rebate 等常用词
+- 扩充合计行关键词：增加 subtotal、汇总
+- 代码可维护性：修复步骤编号冲突、消除 THEMES.get() 死代码、_detect_data_range 变量重命名消除歧义
+- 文档同步：更新 SKILL.md 过时描述，新增公式保护说明和跨平台限制说明
+- 补充 README 更新日志
+
+### 2026-06-10
+- 初始发布，支持 make_excel（DataFrame → 摩根系 Excel）、beautify（美化不改数据）、6 套色系主题一键切换
+- 架构决策：彻底废弃 xlwings，改用纯 openpyxl 字符估算法，一次保存保证格式完整
+- 修复 `end_col` 未定义变量导致 NameError（_apply_styles 和 _beautify_worksheet 两处）
+- 修复类型推断优先级（pct > date > text > money），解决"毛利率"误匹配为 money 的问题
+- 全表字体统一：所有单元格强制 Font(name='Arial', size=11)
+- 确立 beautify 只改格式不改数据原则
 
 ## License
 

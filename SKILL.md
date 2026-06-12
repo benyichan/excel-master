@@ -95,7 +95,7 @@ beautify('输入.xlsx', '输出.xlsx', theme='coral')
 - `references/conditional-formatting.md` — openpyxl 条件格式（颜色阶/数据条/图标集），含排除合计列的坑点
 - `references/excel-screenshot-camera.md` — 用 Excel CopyPicture 照相机截图，条件格式和框线完整保留（优先于 HTML 重新渲染）
 - `references/audit-2026-06-11.md` — 全面审计报告（代码质量、兼容性、安全、普适性、专业性、健壮性、性能、可扩展性），含 P1 问题记录和修复建议
-- `scripts/blur-excel-column.py` — 截图中打码指定列（如用户名/店铺名），用 win32com + PIL 精确识别列位置再做 GaussianBlur
+- `scripts/blur-excel-column.py` — 截图中打码指定列（如用户名/店铺名），用 win32com + PIL 精确识别列位置再做 GaussianBlur。**仅 Windows + Microsoft Excel 环境可用**，缺失依赖时打印友好报错提示。
 
 ## 摩根系标准 — 9 大原则（来自《为什么精英都是Excel控》）
 
@@ -175,31 +175,25 @@ is_formula = (isinstance(val, str) and val.startswith('=')) or cell.data_type ==
 ### 右侧空白列超出原表范围
 beautify 会在数据区域最后一列的右侧加一栏宽度3的空白列。如果原表刚好用满所有列，多出来的空白列可能超出预期。可以在 beautify 之后手动删除。
 
-### theme 无效时静默回退（P2）
+### beautify 公式保护注意事项
 
-`_build_theme_styles()` 中 `THEMES.get(theme_name, THEMES['default'])` 在 theme 不存在时静默回退到 default，没有任何日志或警告。调用方以为用了指定主题（如 coral），实际是 default。
+beautify 模式默认 `data_only=False` 加载工作簿，保留原始公式。但如果输入的 xlsx 之前被以 `data_only=True` 方式另存过（公式已转为缓存值），beautify 加载后将无法恢复公式——此时数字全部显示为静态值且被标为蓝色（手动输入颜色）。
 
-**修复**：在 `make_excel()` 和 `beautify()` 入口中校验 theme：
-```python
-if theme not in THEMES:
-    raise ValueError(f"未知主题 '{theme}'，可选: {sorted(THEMES.keys())}")
-```
+**安全使用**：只有原始 xlsx 包含真实公式时，beautify 的双重检测（`startswith('=')` + `cell.data_type == 'f'`）才能正确工作。.xlsx 文件来源不明时，建议先手动确认公式完整性。
+
+### theme 校验（已修复，无静默回退）
+
+代码中 `_validate_theme()` 会在 `make_excel()`、`beautify()` 和 `_build_theme_styles()` 入口处校验主题名，无效主题直接抛出 `ValueError`，不会静默回退到 default。
 
 ### _detect_data_range() 的 A 列依赖假设
 
 `_detect_data_range()` 中 `row[0].row` 获取行号、`any(cell.value is not None for cell in row)` 检查整行是否有数据——这个逻辑在标准 B2 起始布局下是正确的（`any()` 扫描所有列）。但如果工作表的前 N 行有零散的非表头数据（如备注行、空行混杂注释），函数可能误判 header_row。**beautify 时如果遇到 A 列全空且其他列有数据的表格，使用前确认首行确实是表头。**
 
-### blur-excel-column.py win32com 资源泄漏
+### blur-excel-column.py — Windows 环境依赖与延迟导入
 
-`get_column_ratio()` 中 `wb` 变量在 `Open` 异常时可能未定义就进入 `Close()`，导致 `NameError`。已修复为：
-```python
-wb = None
-try:
-    ...
-finally:
-    if wb: wb.Close(SaveChanges=False)
-    if excel: excel.Quit()
-```
+本脚本依赖 `pywin32` + Microsoft Excel，**仅 Windows 环境可用**。
+`win32com.client` 和 `PIL` 已改为函数内延迟导入——缺失依赖时打印友好安装提示后退出，不会直接崩溃。
+同时 `openpyxl` 导入已移除（本脚本实际不需要）。
 
 ### 类型推断关键词优先级：pct > date > text > money
 
