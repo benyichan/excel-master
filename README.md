@@ -4,6 +4,10 @@
 
 纯 openpyxl，零 xlwings，一次保存线性流程。支持 beautify（保留公式只改格式）和 make_excel（从零生成）两种模式。
 
+<p align="center">
+  <img src="color-card.png" alt="excel-master 12色系主题" width="540">
+</p>
+
 ---
 
 ## 核心能力
