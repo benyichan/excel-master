@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "prompt": "美化这个Excel报表 D:\\test\\sales_report.xlsx，把格式改成摩根士丹利标准",
+    "expected": "beautify 正确检测数据范围，表头蓝底白字，数字千分位两位小数，框线上下粗中间虚线，保留公式"
+  },
+  {
+    "id": 2,
+    "prompt": "从这个CSV生成Excel报表 D:\\test\\data.csv，表头在第1行，水蓝色主题",
+    "expected": "make_excel 正确推断各列类型：毛利率→百分比，金额→#,##0.00，日期→date格式，文本列左对齐"
+  },
+  {
+    "id": 3,
+    "prompt": "美化这个带万元单位的报表 D:\\test\\wan_report.xlsx，日期字符串列名，值在0~1之间",
+    "expected": "beautify 不误判为百分比，万元单位的0.84等值应以 #,##0.00 显示而非 0.00%"
+  }
+]
