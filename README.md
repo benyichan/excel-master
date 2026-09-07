@@ -1,13 +1,8 @@
 # excel-master
 
-一份 CSV、一个乱糟糟的 Excel，一键变成**专业金融机构风格的报表**。
+一份 CSV、一个乱糟糟的 Excel，**跟 AI 说句话**，就变成**专业金融机构风格的报表**。
 
-基于《为什么精英都是Excel控》的格式规范，用纯 openpyxl 实现，无需 Excel 外部进程（零 xlwings）。生成的结果：Arial 11、千分位、水蓝表头、上下粗线/中间虚线无竖线、B2 起始、隐藏网格线——一眼就是"拿来给老板看"的样子。
-
-**两种模式：**
-
-- `make_excel` — 从 DataFrame / CSV **从零生成**报表
-- `beautify` — 美化**已有** Excel，**只改格式不改数据**，保留公式和值，自动备份
+这是一个 **agent skill**——把《为什么精英都是Excel控》的格式规范（Arial 11、千分位、水蓝表头、上下粗线/中间虚线无竖线、B2 起始、隐藏网格线）实现成了 `make_excel`（从零生成）和 `beautify`（美化已有、保留公式）两个工具。你说句话，AI 就替你调用它们。
 
 <p align="center">
   <img src="color-card.png" alt="excel-master 12色系主题" width="540">
@@ -15,15 +10,39 @@
 
 ---
 
-## 安装
+## 怎么用：跟 AI 聊天就行（推荐）
+
+**这是最简单的方式——你不需要学任何命令行或 API。** 装好 skill 后，在支持 agent skill 的工具里直接用自然语言说：
+
+```
+帮我美化下这个 Excel：D:\报表\销售数据.xlsx，表头在第 1 行，用深蓝主题
+```
+
+AI 会按照 skill 的引导自动完成——问你两三个问题（表头在哪、选哪套配色、色阶要不要动），然后一键生成专业报表。全程对话，不用打字命令。
+
+**常见说法都能触发：**
+
+> "出个 Excel" · "美化表格" · "导出报表" · "生成 xlsx" · "格式化表格" · "把数据变成 Excel" · "摩根士丹利格式" · "水蓝色表头" · "做表" · "整理 Excel" · "美化一下" · "表格太难看了帮我调调"
+
+**它能替你做这些：**
+
+- 从任意 CSV / DataFrame 生成一张专业报表
+- 把已有的乱表格美化到"能直接交差"的水准，且**不破坏原数据 / 公式**
+- 自动识别每列该当金额 / 百分比 / 日期 / 文本（误判随时可以纠正）
+
+---
+
+## 进阶：直接调 API
+
+不想走对话也行，skill 底层就是两个函数。
+
+### 安装
 
 ```bash
 pip install pandas openpyxl>=3.0
 ```
 
-## 快速上手
-
-### 方式一：命令行
+### 命令行
 
 ```bash
 # 从 CSV 生成
@@ -36,7 +55,7 @@ python scripts/make_excel.py --beautify 已有报表.xlsx 美化后.xlsx
 python scripts/make_excel.py --beautify 报表.xlsx 美化后.xlsx --theme coral --freeze-rows 3
 ```
 
-### 方式二：Python
+### Python
 
 ```python
 from make_excel import make_excel, beautify
