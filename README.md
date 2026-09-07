@@ -1,8 +1,13 @@
 # excel-master
 
-**Hermes Agent 技能** — 从 DataFrame 生成/美化摩根士丹利标准格式的 Excel 报表。
+一份 CSV、一个乱糟糟的 Excel，一键变成**专业金融机构风格的报表**。
 
-纯 openpyxl，零 xlwings，一次保存线性流程。支持 beautify（保留公式只改格式）和 make_excel（从零生成）两种模式。
+基于《为什么精英都是Excel控》的格式规范，用纯 openpyxl 实现，无需 Excel 外部进程（零 xlwings）。生成的结果：Arial 11、千分位、水蓝表头、上下粗线/中间虚线无竖线、B2 起始、隐藏网格线——一眼就是"拿来给老板看"的样子。
+
+**两种模式：**
+
+- `make_excel` — 从 DataFrame / CSV **从零生成**报表
+- `beautify` — 美化**已有** Excel，**只改格式不改数据**，保留公式和值，自动备份
 
 <p align="center">
   <img src="color-card.png" alt="excel-master 12色系主题" width="540">
@@ -10,33 +15,28 @@
 
 ---
 
-## 核心能力
-
-- **make_excel** — DataFrame → 摩根系 Excel（Arial 11、水蓝表头、千分位、框线上下粗中间细虚线无竖线、B2 起始、隐藏网格线）
-- **beautify** — 美化已有 Excel，只改格式不改数据，保留公式和值，自动备份
-- **12 套色系主题** — 经典商务（水蓝/深海蓝/墨玉绿/陨石灰蓝）、暖色高级（勃艮第红/珊瑚橙）、青春活力（樱花粉/暖阳橙/薰衣草紫/抹茶绿/蜜桃/雾蓝紫）
-- **条件格式自适应** — beautify 自动将 colorScale 色阶最大色替换为当前主题表头色
-- **智能类型推断** — 通过列名关键词（pct `率$` > date > text > money）识别列类型，浮点一律判 money 防万元单位误判
-- **可配置表头冻结** — 参数指定/自动检测/B2 起始/默认首行，4 种策略
-- **自定义数字格式** — `fmt_override` 参数覆盖默认格式
-- **公式颜色区分** — 公式→黑色，手动输入→蓝色（摩根系标准）
-- **三段式 fallback 恢复** — 12 个已知失败模式 + 4 个运行时自动恢复
-
-## 快速使用
+## 安装
 
 ```bash
-# 安装依赖
 pip install pandas openpyxl>=3.0
+```
 
-# CLI：从 CSV 生成
+## 快速上手
+
+### 方式一：命令行
+
+```bash
+# 从 CSV 生成
 python scripts/make_excel.py 数据.csv 输出.xlsx
 
-# CLI：美化已有文件
+# 美化已有文件（只改格式，保留公式）
 python scripts/make_excel.py --beautify 已有报表.xlsx 美化后.xlsx
 
-# CLI：带主题参数
+# 指定配色 + 冻结表头
 python scripts/make_excel.py --beautify 报表.xlsx 美化后.xlsx --theme coral --freeze-rows 3
 ```
+
+### 方式二：Python
 
 ```python
 from make_excel import make_excel, beautify
@@ -52,15 +52,16 @@ make_excel([('汇总', df_summary), ('明细', df_detail)], '报表.xlsx')
 # 切换主题
 make_excel(df, '报表-深海蓝.xlsx', theme='deep-navy')
 
-# 美化已有文件（保留公式）
-beautify('已有报表.xlsx')                    # 原地美化，自动备份
-beautify('已有报表.xlsx', '美化后.xlsx')       # 另存
+# 美化已有文件（保留公式，原地覆盖自动备份）
+beautify('已有报表.xlsx')
 
-# 美化 + 手动指定列类型
+# 美化 + 指定列类型
 beautify('订单表.xlsx', col_types={'订单号': 'text', '金额': 'money'})
 ```
 
-## 色系主题
+## 核心特性
+
+### 色系主题（12 套）
 
 | 主题名 | 中文 | 表头色 | 分类 |
 |--------|------|--------|------|
@@ -77,37 +78,89 @@ beautify('订单表.xlsx', col_types={'订单号': 'text', '金额': 'money'})
 | `peach` | 蜜桃 | #E8897C | 青春活力 |
 | `misty` | 雾蓝紫 | #6B7FB5 | 青春活力 |
 
-## 执行流程
+### 智能类型推断
 
-1. **Step 1** — 读数据，了解表结构（列名、数据类型、范围）
-2. **Step 2** — 确认表头行位置，确定 `freeze_rows`
-3. **Step 3** — 选择配色，确定 `theme`
-4. **Step 4** — PRE-FLIGHT 检查（文件合法、首行是表头、A 列数据、类型推断风险）
-5. **Step 5** — 调用核心脚本生成 xlsx
-6. **Step 6** — TYPE CHECK 验证类型推断
-7. **Step 7** — DELIVERY GATE 全量验证后交付
+自动识别每列类型，套用对应的数字格式。**核心原则：百分比只看列名关键词**，值分析阶段所有小数先判为金额——防止把"0.84万元"误判成"84%"。
 
-## 类型推断
+优先级：**pct > date > text > money**，包含防误匹配（如"毛利率"→百分比、"汇率/利率"→数字）。
 
-**核心原则：百分比只靠列名关键词判断。** 值分析阶段所有 float 先判为 money。
+误判时用 `col_types={'列名': '类型'}` 强制覆盖。
 
-优先级：pct（`率$`/`占比`/`百分比`/`rate$`/`ratio$`）> date > text > money（含 `毛利(?!率)` 防误匹配）
+```python
+beautify('订单表.xlsx', col_types={'订单号': 'text', '金额': 'money'})
+```
 
-误判时可用 `col_types={'列名': '类型'}` 强制覆盖。
+### 多 sheet 列类型隔离
+
+同名列在不同 sheet 语义可能不同（Sheet1 的"金额"是钱、Sheet2 的"金额"是文本编码）。用 `col_types_by_sheet` 按工作表隔离：
+
+```python
+beautify('多表.xlsx', col_types_by_sheet={'明细': {'金额': 'money'}, '汇总': {'金额': 'text'}})
+```
+
+### 条件格式自适应（需显式开启）
+
+自带的 colorScale 色阶往往有语义（"越高越绿=好"），因此**默认不改动**。仅当明确要求配色统一时开启：
+
+```python
+# 把色阶最大色改成当前主题色（数据区内）
+beautify('报表.xlsx', color_scale='apply', color_scale_scope='data')
+```
+
+`color_scale`：`auto`（默认，保留语义色）/ `apply`（改主题色）/ `off`（跳过）
+`color_scale_scope`：`data`（只改数据区）/ `all`（整表）
+
+### 其他特性
+
+- **公式颜色区分** — 公式→黑色，手动输入值→蓝色（摩根系标准）
+- **可配置表头冻结** — 参数指定 / 自动检测 / B2 起始 / 默认首行，4 种策略
+- **自定义数字格式** — `fmt_override` 覆盖默认格式（如 `#,##0.0`）
+- **自动备份** — 原地美化前自动备份，失败可回退
+- **一次保存** — 纯 openpyxl 线性流程，格式始终完整（不用 xlwings 的三步修补循环）
+
+## 参数速查
+
+### `make_excel(data, output_path, ...)`
+
+| 参数 | 说明 |
+|------|------|
+| `data` | DataFrame 或 `[(sheet名, df), ...]` |
+| `output_path` | 输出文件路径 |
+| `theme` | 主题名（见上表），默认 `default` |
+| `fmt_override` | 自定义数字格式，如 `{'money': '#,##0'}` |
+| `freeze_rows` | 冻结表头行数，默认自动推断 |
+
+### `beautify(input_path, output_path=None, ...)`
+
+| 参数 | 说明 |
+|------|------|
+| `input_path` / `output_path` | 输入/输出路径；不传 `output_path` 则原地覆盖 |
+| `col_types` | 按列名覆盖列类型 |
+| `col_types_by_sheet` | 按工作表隔离列类型 |
+| `backup` | 原地覆盖前是否备份（默认 `True`） |
+| `theme` | 主题名 |
+| `fmt_override` | 自定义数字格式 |
+| `freeze_rows` | 冻结行数 |
+| `color_scale` | 条件格式色阶策略：`auto`/`apply`/`off` |
+| `color_scale_scope` | 色阶应用范围：`data`/`all` |
 
 ## 设计原则
 
-1. **零 xlwings** — 纯 openpyxl，一次保存，不调 Excel 外部进程
-2. **纯函数式** — 同样输入永远同样输出
-3. **单文件** — `make_excel.py` 一个文件解决所有
-4. **基座职责分离** — 配色/行为作为参数暴露，应用层直接传参
+1. **零 xlwings** — 纯 openpyxl，一次保存，不调 Excel 外部进程（xlwings 会吞掉 openpyxl 的边框/颜色/数字格式）
+2. **纯函数式** — 同样的输入永远产生同样的输出
+3. **单文件** — `make_excel.py` 一个文件解决所有，加功能用追加函数
+4. **基座职责分离** — 配色/行为作为参数暴露，上层脚本直接传参调用
 
-## 参考文档
+## 文档结构
 
-- `SKILL.md` — 完整 skill 文档（含强制约束、三段式 fallback 表、11 条反例黑名单）
+- `scripts/make_excel.py` — 核心脚本（生成 + 美化）
+- `scripts/interactive_make_excel.py` — agent 交互层 wrapper
+- `SKILL.md` — 完整的 skill 交互规范（强制约束、失败恢复表、反例黑名单）
 - `references/type-inference-rules.md` — 列类型推断规则
 - `references/implementation-checklist.md` — 交付前逐项验证清单
-- `references/dual-header-format.py` — 双表头/多数据块布局手工格式脚本
+- `references/dual-header-format.py` — 双表头/多数据块布局手工脚本
+- `references/camera-screenshot-white-bg.md` — Excel 截图白底修正方案
+- `test-prompts.json` — 类型推断/美化/万元单位的测试用例
 
 ## License
 
