@@ -28,8 +28,9 @@ openpyxl 没有 autofit 方法。xlwings 有但会吞格式。
 
 import argparse
 import re
+import statistics
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from shutil import copy2
 from typing import Union, Optional
@@ -38,6 +39,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import range_boundaries
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -95,8 +97,10 @@ FMT = {
 # ── 布局（规则1：行高18，规则7：A列留空）──
 ROW_HEIGHT = 18            # 默认13.5太挤，中文笔画密，18 才有呼吸感
 A_COL_WIDTH = 2             # A列留空，左侧视觉缓冲
+VALID_COL_TYPES = {'pct', 'money', 'number', 'date', 'text', 'unknown'}
 MIN_COL_WIDTH = 10          # 列宽下限（太窄文字折行）
 MAX_COL_WIDTH = 50          # 列宽上限（太宽影响一览性）
+MAX_SCAN_ROWS = 10000       # beautify 数据范围扫描上限。防止 max_row 因误操作膨胀到 100万行。
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -297,6 +301,52 @@ def _build_theme_styles(theme_name: str):
 # 如果 money 先匹配就会被错误归类。用 `率$` 限定词尾 + `毛利(?!率)` 排除误匹配。
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ── 共享关键词常量（pandas 版与 worksheet 版共用，避免两套正则漂移）──
+# pct：以"率"结尾，但排除"汇率/利率/速率/费率/税率"等以率结尾却非百分比的词。
+# 否则"汇率 7.2"会被误判为百分比套上 0.00%，显示成 720.00%。
+_PCT_EXCLUDE_WORDS = ('汇率', '利率', '速率', '费率', '税率', '倍率', '概率', '频率', '功率')
+
+_DATE_KEYWORDS = r'(日期|时间|年月|期间|年份|month|year|date|time)'
+_TEXT_KEYWORDS = r'(编号|id|单号|编码|电话|手机|备注|说明|名称|地址|描述|号码|订单号|负责人|姓名|联系人|部门|岗位|phone|email|code|desc|address)'
+_MONEY_KEYWORDS = r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|amount|price|cost|revenue|total|budget|expense)'
+
+
+def _is_pct_column(name: str) -> bool:
+    """判断列名是否表示百分比。
+
+    命中"占比/百分比/percent/percentage/rate/ratio"直接判 pct；
+    以"率"结尾时，排除"汇率/利率/速率"等非百分比名词（它们应判 number）。
+
+    注意排除词用「列名精确等于」而非子串包含：'利率' in '毛利率' 为 True，
+    若用子串包含会把"毛利率"误伤成非百分比。业务上"汇率/利率"列名几乎总就是这几个词。
+    """
+    n = name.lower()
+    if re.search(r'(占比|百分比|percent|percentage|增长率|rate$|ratio$)', n):
+        return True
+    if re.search(r'率$', n):
+        # 精确等于排除词才排除；"毛利率/完成率"等含"利率"子串的比率词不会被误伤
+        return name not in _PCT_EXCLUDE_WORDS
+    return False
+
+
+def _match_keyword_type(name: str) -> Optional[str]:
+    """仅按列名关键词匹配类型（pct > date > text > money）。未命中返回 None。
+
+    供 pandas 版与 worksheet 版共用，避免两套正则人肉同步导致的漂移。
+    """
+    if _is_pct_column(name):
+        return 'pct'
+    if re.search(_DATE_KEYWORDS, name.lower()):
+        # 注意："月份"已从 date 关键词移除——业务表中"月份"几乎总是文本标签（1月/2月），
+        # 不是有效日期。若列含实际 datetime，值特征阶段会正确识别。
+        return 'date'
+    if re.search(_TEXT_KEYWORDS, name.lower()):
+        return 'text'
+    if re.search(_MONEY_KEYWORDS, name.lower()):
+        return 'money'
+    return None
+
+
 def _infer_column_type(name: str, series: pd.Series) -> str:
     """
     根据列名关键词 + 值特征推断列类型。
@@ -317,19 +367,10 @@ def _infer_column_type(name: str, series: pd.Series) -> str:
     关键词匹配会落空，完全依赖值特征。此时文本列可能被误判为 money。
     调用方可以事后用 fmt_override 修正。
     """
-    n = name.lower()
-
     # ── 关键词匹配（优先级：pct > date > text > money）──
-    # "率"优先检测，避免"毛利率"被 money 关键词误匹配
-    if re.search(r'(率$|占比|百分比|增长率|rate$|ratio$)', n):
-        return 'pct'
-    if re.search(r'(日期|时间|年月|期间|年份|月份|date|time|year|month)', n):
-        return 'date'
-    if re.search(r'(编号|id|单号|编码|电话|手机|备注|说明|名称|地址|描述|号码|订单号|负责人|姓名|联系人|部门|岗位|phone|email|code|desc|address)', n):
-        return 'text'
-    # 注意：毛利(?!率) 匹配"毛利"但不匹配"毛利率"（已归为 pct）
-    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|amount|price|cost|revenue|total|budget|expense)', n):
-        return 'money'
+    matched = _match_keyword_type(name)
+    if matched:
+        return matched
 
     # ── 值特征 ──
     clean = series.dropna()
@@ -337,6 +378,11 @@ def _infer_column_type(name: str, series: pd.Series) -> str:
         return 'unknown'
 
     try:
+        # bool 列不应被当作 number——True/False 用 #,##0 格式会显示成 1/0。
+        # 布尔语义应保持文本/原样，按 text 处理。
+        if pd.api.types.is_bool_dtype(clean) or clean.map(type).eq(bool).all():
+            return 'text'
+
         if pd.api.types.is_datetime64_any_dtype(clean):
             return 'date'
 
@@ -542,17 +588,11 @@ def _apply_styles(ws, df: pd.DataFrame, theme: str = 'default', fmt_override: Op
     ws.column_dimensions[right_col].width = 3
 
     # 7. 全局设置：隐藏网格线 + 冻结表头
-    # 4 种冻结策略（优先级由高到低）：
-    #   1. freeze_rows 参数显式指定 → 用指定值
-    #   2. beautify 模式检测到的 header_row → 冻结到表头行
-    #   3. B2起始布局（行1留空，行2表头）→ 冻结3，即冻结行1-2
-    #   4. 默认：表头在第1行 → 冻结2，即冻结行1
+    # make_excel 模式表头恒在第 1 行（数据从 B2 起）。freeze_rows 显式指定时冻结到该行下方；
+    # 未指定时默认冻结首行（A2）。
     ws.sheet_view.showGridLines = False
     if freeze_rows is not None:
         freeze_cell = f'A{freeze_rows + 1}'
-    elif ws.cell(row=1, column=2).value and not ws.cell(row=1, column=1).value:
-        # B2起始：行1只有B列有值（表头），A列空 → 行1本身是数据表头，冻结A2
-        freeze_cell = 'A2'
     else:
         freeze_cell = 'A2'
     ws.freeze_panes = freeze_cell
@@ -668,7 +708,10 @@ def _detect_data_range(ws):
     header_row = None
     last_data_row = 0
 
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row or 1, max_col=ws.max_column or 1):
+    # 安全扫描上限：限制扫描行数，防止 max_row 因误操作膨胀到 100万行
+    safe_max_row = min(ws.max_row or 1, MAX_SCAN_ROWS)
+
+    for row in ws.iter_rows(min_row=1, max_row=safe_max_row, max_col=ws.max_column or 1):
         r = row[0].row
         has_data = any(cell.value is not None for cell in row)
         if has_data and header_row is None:
@@ -689,10 +732,10 @@ def _detect_data_range(ws):
     return header_row, data_start, data_end, start_col, end_col
 
 
-def _sample_ws_column(ws, col, start_row, end_row, max_samples=100):
+def _sample_ws_column(ws, col, start_row, end_row, max_samples=200):
     """
     从工作表列中采样非空值，用于类型推断。
-    上限100条，够判断趋势就行，不扫全表（大文件性能考虑）。
+    上限200条，覆盖中小表的大部分数据，大表也有足够代表性。
     """
     samples = []
     for r in range(start_row, end_row + 1):
@@ -721,25 +764,23 @@ def _infer_col_type_from_ws(header_value, samples):
     name = str(header_value) if header_value is not None else ''
     n = name.lower()
 
-    # 关键词匹配（优先级：pct > date > text > money）
-    if re.search(r'(率$|占比|百分比|增长率|rate$|ratio$)', n):
-        return 'pct'
-    if re.search(r'(日期|时间|年月|期间|年份|月份|date|time|year|month)', n):
-        return 'date'
-    if re.search(r'(编号|id|单号|编码|电话|手机|备注|说明|名称|地址|描述|号码|订单号|负责人|姓名|联系人|部门|岗位|phone|email|code|desc|address)', n):
-        return 'text'
-    if re.search(r'(金额|价格|收入|成本|费用|毛利额|净利|合计|总额|售价|单价|预算|支出|毛利(?!率)|amount|price|cost|revenue|total|budget|expense)', n):
-        return 'money'
+    # 关键词匹配（优先级：pct > date > text > money）——与 pandas 版共用共享函数
+    matched = _match_keyword_type(name)
+    if matched:
+        return matched
 
     if not samples:
         return 'unknown'
 
     # 值采样分析
-    numeric_samples = [v for v in samples if isinstance(v, (int, float))]
+    numeric_samples = [v for v in samples if isinstance(v, (int, float)) and not isinstance(v, bool)]
     str_samples = [str(v) for v in samples if not isinstance(v, (int, float))]
 
+    # bool 列（True/False）不应被当作 number——用 #,##0 会显示成 1/0
+    if any(isinstance(v, bool) for v in samples):
+        return 'text'
+
     # 检查日期类型（datetime/date 对象过半则判为 date）
-    from datetime import datetime, date
     date_count = sum(1 for v in samples if isinstance(v, (datetime, date)))
     if date_count >= len(samples) * 0.5:
         return 'date'
@@ -758,9 +799,57 @@ def _infer_col_type_from_ws(header_value, samples):
     return 'unknown'
 
 
+def _detect_sub_headers(ws, header_row, start_col, end_col):
+    """
+    检测合并单元格导致的子表头布局。
+
+    场景：Row2 有合并单元格（如 B2:C2="实际数据"），
+    C2 是 MergedCell(value=None)，但 Row3 C3 有值（"占比"）。
+
+    返回 (has_sub, sub_headers, sub_header_row)：
+    - has_sub: bool — 是否有子表头
+    - sub_headers: dict — {列号: 子表头文字}
+    - sub_header_row: int — 子表头所在行号
+
+    注意：只检测数据列区域（start_col..end_col），不包括 A 列。
+    """
+    sub_header_row = header_row + 1
+    sub_headers = {}
+    has_sub = False
+
+    for c in range(start_col, end_col + 1):
+        header_val = ws.cell(row=header_row, column=c).value
+        sub_val = ws.cell(row=sub_header_row, column=c).value
+        if header_val is None and sub_val is not None:
+            sub_headers[c] = str(sub_val)
+            has_sub = True
+
+    if has_sub:
+        return has_sub, sub_headers, sub_header_row
+    return False, None, None
+
+
+def _worksheet_a_has_data(ws, header_row, data_start, data_end) -> bool:
+    """判断 A 列区域（表头行 + 数据行）是否有任意非空值。
+
+    与是否只关注 a_header_val 不同：很多表 A 列表头留空，但 A2:A10 有部门名。
+    只要任一单元格非空，A 列就应补齐摩根系格式并自适应宽度。
+    """
+    if ws.cell(row=header_row, column=1).value is not None:
+        return True
+    for r in range(data_start, data_end + 1):
+        if ws.cell(row=r, column=1).value is not None:
+            return True
+    return False
+
+
 def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: str = 'default',
                         fmt_override: Optional[dict] = None,
-                        freeze_rows: Optional[int] = None):
+                        freeze_rows: Optional[int] = None,
+                        sheet_name: Optional[str] = None,
+                        col_types_by_sheet: Optional[dict] = None,
+                        color_scale: str = 'auto',
+                        color_scale_scope: str = 'data'):
     """
     对单个工作表应用摩根系格式（不改变任何单元格的值）。
 
@@ -768,7 +857,7 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     ----
     col_types_override : dict, optional
         强制指定列的类型，如 {'订单号': 'text', '金额': 'money'}。
-        列名匹配，覆盖自动推断结果。
+        列名匹配，覆盖自动推断结果。作用于当前 sheet。
     theme : str
         色系主题名。可用: """ + AVAILABLE_THEMES + """。默认 'default'。
     fmt_override : dict, optional
@@ -776,6 +865,20 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     freeze_rows : int, optional
         要冻结的行数。默认 None 自动推断：根据检测到的 header_row 冻结。
         传 0 则不冻结。
+    sheet_name : str, optional
+        当前工作表名。用于按 sheet 隔离 col_types_by_sheet。
+    col_types_by_sheet : dict, optional
+        {sheet名: {列名: 类型}}——按工作表隔离列类型覆盖，避免同名列在不同 sheet 语义不同被全局误伤。
+        与 col_types_override 同时传入时，col_types_by_sheet 优先。
+    color_scale : str, optional
+        条件格式（colorScale 色阶）自适应策略：
+        - 'auto'：保留已有条件格式，不强制改色（默认）
+        - 'apply'：将色阶最大色替换为主题色（需用户明确选择）
+        - 'off'：跳过条件格式处理
+    color_scale_scope : str, optional
+        当 color_scale='apply' 时的应用范围：
+        - 'data'：只改数据区（数据行范围）的色阶（默认）
+        - 'all'：改工作表中所有色阶
 
     与 make_excel 的差异：
     - 数据范围动态检测（不是固定从 B2 开始）
@@ -792,13 +895,27 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
         return  # 空表跳过
     header_row, data_start, data_end, start_col, end_col = dr
 
+    # 按 sheet 隔离的列类型覆盖优先于全局 override
+    if col_types_by_sheet and sheet_name in col_types_by_sheet:
+        col_types_override = {**col_types_override, **col_types_by_sheet[sheet_name]} if col_types_override else col_types_by_sheet[sheet_name]
+
+    # 0. 子表头检测（合并单元格场景）
+    # 如果 header_row 的数据列有 MergedCell（value=None）而下一行有值，
+    # 则用下一行做子表头推断。同时调整 data_start 跳过子表头行。
+    has_sub_headers, sub_headers, sub_header_row = _detect_sub_headers(
+        ws, header_row, start_col, end_col
+    )
+    if has_sub_headers:
+        data_start = sub_header_row + 1  # 子表头行不当作数据行
+
     # 1. 行高 + A列宽
-    # A 列如果有数据，自适应宽度（下限10，上限50）；否则保持 2（留空）
+    # A 列如果有数据，自适应宽度（下限10，上限50）；否则保持 2（留空）。
+    # 用 _worksheet_a_has_data 而非仅看 A 列表头——A1 为空但 A2 起有部门名的表也能正确自适应。
     for r in range(header_row, data_end + 1):
         ws.row_dimensions[r].height = ROW_HEIGHT
     a_header_val = ws.cell(row=header_row, column=1).value
-    if a_header_val is not None:
-        a_max = _char_width(str(a_header_val))
+    if _worksheet_a_has_data(ws, header_row, data_start, data_end):
+        a_max = _char_width(str(a_header_val)) if a_header_val is not None else 0
         for r in range(data_start, data_end + 1):
             v = ws.cell(row=r, column=1).value
             if v is not None:
@@ -823,9 +940,18 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
         # 手动覆盖优先——当自动推断不准时，调用方可以精确指定
         if col_types_override and col_headers[c] in col_types_override:
             ct = col_types_override[col_headers[c]]
+            if ct not in VALID_COL_TYPES:
+                raise ValueError(
+                    f"无效列类型 '{ct}' (列 '{col_headers[c]}')。"
+                    f" 有效值: {sorted(VALID_COL_TYPES)}"
+                )
         else:
+            # 子表头：如果主表头是 None（合并单元格），用子表头文字做关键词推断
+            infer_header = header_val
+            if header_val is None and has_sub_headers and c in sub_headers:
+                infer_header = sub_headers[c]
             samples = _sample_ws_column(ws, c, data_start, data_end)
-            ct = _infer_col_type_from_ws(header_val, samples)
+            ct = _infer_col_type_from_ws(infer_header, samples)
         col_types[c] = ct
 
         est = _estimate_col_width_from_cells(ws, c, header_row, data_end)
@@ -844,6 +970,14 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
         cell.font = s['header_font']
         cell.fill = s['header_fill']
         cell.alignment = HDR_ALIGN
+
+    # 3b. 子表头格式（合并单元格场景——子表头行也用 header 样式）
+    if has_sub_headers:
+        for c in range(start_col, end_col + 1):
+            cell = ws.cell(row=sub_header_row, column=c)
+            cell.font = s['header_font']
+            cell.fill = s['header_fill']
+            cell.alignment = HDR_ALIGN
 
     # 4. 数据行格式
     for c in range(start_col, end_col + 1):
@@ -883,13 +1017,17 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     # 4.5 A列格式补全
     # beautify 时如果 A 列有数据（如部门名称/合计行），补齐摩根系格式。
     # make_excel 模式不受影响——A列始终留空。
+    # 用 _worksheet_a_has_data：A1 表头为空但 A2 起有数据的表也能补齐格式。
+    a_has_data = _worksheet_a_has_data(ws, header_row, data_start, data_end)
     a_header_val = ws.cell(row=header_row, column=1).value
-    if a_header_val is not None:
-        # 表头蓝底白字右对齐
-        cell = ws.cell(row=header_row, column=1)
-        cell.font = s['header_font']
-        cell.fill = s['header_fill']
-        cell.alignment = HDR_ALIGN
+
+    if a_has_data:
+        # 表头蓝底白字右对齐（如果表头行 A 列有值的话）
+        if a_header_val is not None:
+            cell = ws.cell(row=header_row, column=1)
+            cell.font = s['header_font']
+            cell.fill = s['header_fill']
+            cell.alignment = HDR_ALIGN
         # 数据行：A 列一般为文本，左对齐
         for r in range(data_start, data_end + 1):
             cell = ws.cell(row=r, column=1)
@@ -959,23 +1097,57 @@ def _beautify_worksheet(ws, col_types_override: Optional[dict] = None, theme: st
     right_col = get_column_letter(last_data_col + 1)
     ws.column_dimensions[right_col].width = 3
 
-    # 7.1 条件格式自适应：将色阶最大色换为主题色
-    _adapt_conditional_formatting(ws, theme)
+    # 7.1 条件格式自适应：color_scale 策略决定是否把色阶最大色换为主题色
+    # 'apply'：替换（需用户明确选择），并按 color_scale_scope 限定范围
+    # 'auto'：保留已有条件格式不动（默认，避免破坏"越高越绿"这类语义色）
+    # 'off'：跳过
+    if color_scale == 'apply':
+        _adapt_conditional_formatting(ws, theme, scope=color_scale_scope)
+    # 'auto'/'off' 均不再调用 _adapt_conditional_formatting
 
     # 7b. 全局设置：隐藏网格线 + 冻结表头
     # freeze_rows 未指定时，根据检测到的 header_row 冻结
+    # 如果有子表头，冻结到子表头行下方，确保合并单元格 + 子表头都可见
     ws.sheet_view.showGridLines = False
     if freeze_rows is not None:
         freeze_cell = f'A{freeze_rows + 1}' if freeze_rows > 0 else None
+    elif has_sub_headers:
+        freeze_cell = f'A{sub_header_row + 1}'
     else:
         freeze_cell = f'A{header_row + 1}'
     if freeze_cell:
         ws.freeze_panes = freeze_cell
 
 
-def _adapt_conditional_formatting(ws, theme: str):
+# 条件格式 colorScale 的默认应用范围：'data'=仅数据区，'all'=整个工作表
+_CF_SCOPE = ('all', 'data')
+
+
+def _range_intersects(rule_range: str, target_range: Optional[tuple]) -> bool:
+    """判断条件格式规则所在区域 rule_range 是否与目标范围相交。
+
+    rule_range 是 openpyxl 的坐标串（如 'B2:Z100'）。
+    target_range 为 (min_col, min_row, max_col, max_row) 四元组；None 表示不过滤（全部命中）。
+    不相交则返回 False，规则不改色。
     """
-    将条件格式中 colorScale 的最大色换为主题色。
+    if not target_range:
+        return True
+    try:
+        r_min_col, r_min_row, r_max_col, r_max_row = range_boundaries(rule_range)
+        t_min_col, t_min_row, t_max_col, t_max_row = target_range
+        if r_max_col < t_min_col or r_max_row < t_min_row:
+            return False
+        if r_min_col > t_max_col or r_min_row > t_max_row:
+            return False
+        return True
+    except Exception:
+        # 解析失败（如异常坐标）时保守处理：只对明确匹配的区域生效，不误改
+        return False
+
+
+def _adapt_conditional_formatting(ws, theme: str, scope: str = 'data'):
+    """
+    将条件格式中 colorScale 的最大色换为主题色（仅当规则区域与目标范围相交）。
     保持 min=白色不变，只改 max 色为表头色。
     其他类型条件格式（dataBar、iconSet 等）保持不变。
 
@@ -983,20 +1155,34 @@ def _adapt_conditional_formatting(ws, theme: str):
     ----
     ws : Worksheet
     theme : str — 主题名
+    scope : str — 应用范围
+        'data'：只改数据区（数据行范围）的色阶（默认）
+        'all'：改工作表中所有色阶
     """
     s = _build_theme_styles(theme)
     theme_color = THEMES[theme]['header_fill']
     from openpyxl.styles import Color
-    from openpyxl.formatting.rule import ColorScaleRule
+
+    # 计算数据区范围（min_col, min_row, max_col, max_row），供 'data' 模式过滤
+    dr = _detect_data_range(ws)
+    target_range = None
+    if scope == 'data' and dr is not None:
+        header_row, data_start, data_end, start_col, end_col = dr
+        target_range = (start_col, data_start, end_col, data_end)
 
     for cf in ws.conditional_formatting:
         for rule in cf.rules:
             if rule.type == 'colorScale':
                 cs = rule.colorScale
+                # 规则区域与目标范围不相交时跳过，避免误改其他区的语义色
+                if not _range_intersects(str(cf.sqref), target_range):
+                    continue
                 if cs.color and len(cs.color) >= 2:
-                    # 替换最大色（最后一个 color）为主题色
+                    # 替换最大色（最后一个 color）为主题色。
+                    # 只传 rgb，不设 theme/auto/indexed——openpyxl 的 Color 一旦被赋 theme
+                    # 索引，序列化时优先用 theme 而非 rgb，读回 .rgb 会报 "must be str"。
+                    # 仅用 rgb 构造，.rgb 即为该十六进制串。
                     cs.color[-1] = Color(rgb=theme_color)
-                    cs.color[-1].type = 'rgb'
 
 
 def beautify(
@@ -1004,10 +1190,13 @@ def beautify(
     output_path: Optional[str] = None,
     *,
     col_types: Optional[dict] = None,
+    col_types_by_sheet: Optional[dict] = None,
     backup: bool = True,
     theme: str = 'default',
     fmt_override: Optional[dict] = None,
     freeze_rows: Optional[int] = None,
+    color_scale: str = 'auto',
+    color_scale_scope: str = 'data',
 ) -> str:
     """
     美化已有 Excel 文件，只改格式不改数据（保留公式和值）。
@@ -1021,6 +1210,10 @@ def beautify(
     col_types : dict, optional
         手动指定列类型，如 {'订单号': 'text', '金额': 'money'}。
         覆盖自动类型推断。可选值: money/number/pct/date/text。
+        按列名全局匹配所有 sheet。
+    col_types_by_sheet : dict, optional
+        {sheet名: {列名: 类型}}——按工作表隔离列类型覆盖，避免同名列在不同 sheet
+        语义不同被全局误伤。与 col_types 同时传入时，本参数优先。
     backup : bool, default True
         原地覆盖前是否自动备份。备份文件名为 <原文件名>_backup_YYYYMMDD_HHMMSS.xlsx。
     theme : str
@@ -1030,6 +1223,15 @@ def beautify(
     freeze_rows : int, optional
         要冻结的行数。默认 None 自动推断：根据检测到的表头行冻结。
         传 0 则不冻结。
+    color_scale : str, optional
+        条件格式（colorScale 色阶）自适应策略：
+        - 'auto'：保留已有条件格式，不强制改色（默认）
+        - 'apply'：将色阶最大色替换为主题色（会改变语义色，需用户明确选择）
+        - 'off'：跳过条件格式处理
+    color_scale_scope : str, optional
+        当 color_scale='apply' 时的应用范围：
+        - 'data'：只改数据区（数据行范围）的色阶（默认）
+        - 'all'：改工作表中所有色阶
 
     返回
     ----
@@ -1041,6 +1243,10 @@ def beautify(
     字体颜色根据公式检测自动分配：公式→黑，手动输入→蓝。
     """
     _validate_theme(theme)
+    if color_scale not in ('auto', 'apply', 'off'):
+        raise ValueError(f"无效 color_scale '{color_scale}'。可选: auto/apply/off")
+    if color_scale_scope not in _CF_SCOPE:
+        raise ValueError(f"无效 color_scale_scope '{color_scale_scope}'。可选: {sorted(_CF_SCOPE)}")
     from openpyxl import load_workbook
 
     out = output_path or input_path
@@ -1058,7 +1264,9 @@ def beautify(
 
     for ws in wb.worksheets:
         _beautify_worksheet(ws, col_types_override=col_types, theme=theme, fmt_override=fmt_override,
-                            freeze_rows=freeze_rows)
+                            freeze_rows=freeze_rows, sheet_name=ws.title,
+                            col_types_by_sheet=col_types_by_sheet, color_scale=color_scale,
+                            color_scale_scope=color_scale_scope)
 
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,9 @@ python interactive_make_excel.py beautify 输入.xlsx --freeze-rows 3 --theme sa
 # 美化，用户没提供信息→自动推断+水蓝
 python interactive_make_excel.py beautify 输入.xlsx
 
+# 美化 + 条件格式改成主题色（用户明确选择「是」，且只改数据区）
+python interactive_make_excel.py beautify 输入.xlsx --color-scale apply --color-scale-scope data
+
 # 从 CSV 生成，用户指定了配色
 python interactive_make_excel.py make 数据.csv 输出.xlsx --theme deep-navy
 """
@@ -50,6 +53,10 @@ def main():
                         help='配色主题。不传则 default（水蓝）')
     parser.add_argument('--col-types', nargs='*', default=None,
                         help='列类型覆盖，格式: 订单号:text 金额:money')
+    parser.add_argument('--color-scale', default=None, choices=['auto', 'apply', 'off'],
+                        help='条件格式色阶自适应: auto=保留(默认) apply=改为主题色 off=跳过')
+    parser.add_argument('--color-scale-scope', default='data', choices=['data', 'all'],
+                        help="color-scale=apply 时的应用范围: data=仅数据区(默认) all=整个表")
 
     args = parser.parse_args()
     theme = args.theme if args.theme else 'default'
@@ -64,11 +71,15 @@ def main():
                     k, v = pair.split(':', 1)
                     col_types_dict[k] = v
 
+        color_scale = args.color_scale or 'auto'
+
         result = beautify(
             args.input, args.output,
             theme=theme,
             freeze_rows=args.freeze_rows,
             col_types=col_types_dict,
+            color_scale=color_scale,
+            color_scale_scope=args.color_scale_scope,
         )
         print(f'已美化: {result}')
         return

@@ -20,19 +20,24 @@
 - [ ] 公式颜色双重检测：`_cell_display_text(cell).startswith('=')` or `cell.data_type == 'f'` → 黑色，否则 → 主题色
 - [ ] DataTableFormula / ArrayFormula 对象列宽正常（`_cell_display_text` 保护生效）
 - [ ] `_detect_data_range()` 正确识别表头行。如果首行有备注/空行，确认第 1 个非空行确实是表头
+- [ ] 合并单元格子表头检测：如果 header_row 返回值有 None 列（merged cell 覆盖），检查下一行是否已自动识别为子表头并应用 header 格式
+- [ ] col_types 覆盖值有效性检查：无效值（如 `'invalid'`）应抛 ValueError 而非静默失败
 
-## 类型推断验证（2026-06-22 策略：百分比只靠列名关键词）
+## 类型推断验证（v2.2 — "月份"已从 date 关键词移除）
 
 - [ ] 关键列手动验证一次 `number_format`：
   - 小数值列（万元/千元单位）→ `#,##0.00`，不是 `0.00%`
   - 含"率/占比/百分比"关键词的列 → `0.00%`
   - 日期列 → `yyyy/mm/dd`（或对应 date 格式）
   - 文本列（订单号/编码/证书号）→ `@`，左对齐
+  - "月份"列 → 值如"1月""2026-01"应为 `@`（text），不是 `yyyy/mm/dd`
 - [ ] `_infer_column_type` 如果返回 `'unknown'`，已用 `col_types` 强制指定
 
 ## 条件格式自适应
 
-- [ ] colorScale 色阶的最大色已替换为当前主题表头色
+- [ ] 默认（color_scale='auto'）不破坏色阶语义色——色阶最大色保持不变
+- [ ] 用户明确要求配色统一（color_scale='apply'）时，色阶最大色才替换为当前主题表头色
+- [ ] color_scale_scope='data' 时只改数据区色阶，表头区/数据区外色阶不变
 - [ ] 其他条件格式（dataBar、iconSet）未被动到
 
 ## 主题校验

@@ -1,7 +1,7 @@
 ---
 name: excel-master
 title: excel-master
-description: "从 DataFrame 生成/美化摩根士丹利标准格式的 Excel 报表。纯 openpyxl，零 xlwings，一次保存线性流程。支持 beautify（保留公式只改格式）和 make_excel（从零生成）两种模式。12 套色系主题（水蓝/深海蓝/墨玉绿/陨石灰蓝/勃艮第红/珊瑚橙/樱花粉/暖阳橙/薰衣草紫/抹茶绿/蜜桃/雾蓝紫），条件格式自适应，类型推断（pct 关键词正则 `率$|占比|...` / date / text / money）带三段式 fallback 恢复表，11 条反例黑名单。当用户说「出个Excel」「美化表格」「导出报表」「生成xlsx」「格式化表格」「把数据变成Excel」「摩根士丹利格式」「水蓝色表头」「做表」「整理Excel」「美化一下」「表格太难看了帮我调调」时使用。"
+description: "从 DataFrame 生成/美化摩根士丹利标准格式的 Excel 报表。纯 openpyxl，零 xlwings，一次保存线性流程。支持 beautify（保留公式只改格式）和 make_excel（从零生成）两种模式。12 套色系主题（水蓝/深海蓝/墨玉绿/陨石灰蓝/勃艮第红/珊瑚橙/樱花粉/暖阳橙/薰衣草紫/抹茶绿/蜜桃/雾蓝紫），条件格式自适应，类型推断（pct 关键词正则 `率$|占比|...` / date / text / money）带三段式 fallback 恢复表，14 条反例黑名单。v2.2: 合并单元格自动检测、月份误判修复、col_types 校验、扫描上限保护。当用户说「出个Excel」「美化表格」「导出报表」「生成xlsx」「格式化表格」「把数据变成Excel」「摩根士丹利格式」「水蓝色表头」「做表」「整理Excel」「美化一下」「表格太难看了帮我调调」时使用。"
 ---
 
 # excel-master
@@ -34,6 +34,14 @@ description: "从 DataFrame 生成/美化摩根士丹利标准格式的 Excel �
 
 > **🔴 CHECKPOINT · 🛑 STOP** — Step 2 和 Step 3 都得到明确回答了？用户说"跳过"不算"未确认"。确认后再进入 Step 4。
 
+**Step 3b：确认条件格式 → 确定 color_scale + color_scale_scope（仅 beautify 已有色阶文件时）**
+- **输入**：Step 5 前扫描到的条件格式（colorScale 色阶）
+- **处理**：只在该文件**已有色阶条件格式**时询问用户。展示选项：
+  - **是否应用**：`是` → 色阶最大色改为主题色；`否`/跳过 → 保留原语义色（默认）
+  - **应用区域**（选了"是"才问）：`数据区`→ 只改数据行范围的色阶；`整个表`→ 改工作表中所有色阶
+- **输出**：`color_scale=apply/off/auto` + `color_scale_scope=data/all`
+- **⚠️ 注意**：色阶往往有语义（越高越绿=好、越高越红=差）。默认**建议保留**（`auto`），只有用户明确要求"配色统一"时才设 `apply`。不要默认破坏语义色。
+
 **Step 4：PRE-FLIGHT 检查（beautify 模式）**
 - **输入**：文件路径
 - **处理**：验证文件存在/合法、第 1 个非空行是表头、A 列是否有数据、列名有无"率"误判风险
@@ -64,6 +72,9 @@ python scripts/interactive_make_excel.py beautify 报表.xlsx --freeze-rows 3 --
 
 # 用户跳过 → 不传参，走自动推断+水蓝
 python scripts/interactive_make_excel.py beautify 报表.xlsx
+
+# 用户明确要求配色统一 → 条件格式也改成主题色（只改数据区）
+python scripts/interactive_make_excel.py beautify 报表.xlsx --color-scale apply --color-scale-scope data
 
 # 从 CSV 生成
 python scripts/interactive_make_excel.py make 数据.csv 输出.xlsx --theme deep-navy
@@ -125,6 +136,12 @@ beautify('已有报表.xlsx', '美化后.xlsx', fmt_override={'money': '#,##0'})
 
 # beautify + 冻结表头
 beautify('已有报表.xlsx', freeze_rows=3)      # 冻前3行
+
+# beautify + 按工作表隔离列类型（多 sheet 同名列语义不同）
+beautify('多表.xlsx', col_types_by_sheet={'明细': {'金额': 'money'}, '汇总': {'金额': 'text'}})
+
+# beautify + 条件格式改主题色（需用户明确要求，默认 auto 保留语义色）
+beautify('报表.xlsx', color_scale='apply', color_scale_scope='data')
 ```
 
 ## 命令行
@@ -180,26 +197,44 @@ beautify('输入.xlsx', '输出.xlsx', theme='warm-sun')
 > 2. 如果 `_infer_col_type` 返回 `'unknown'`，必须用 `col_types` 强制指定
 > 3. 文本列（订单号/编码等）是否左对齐，而非被当作数字右对齐
 > 4. 关键词没命中的列（列名含糊如"字段A""数据1"）手动检查一次
+> 5. **合并单元格自动检测**：代码现在会检测 merged cells 覆盖的表头区域并自动用于表头行推断。如果检测到子表头行（Row3），会自动用子表头文字做类型推断，并对子表头行应用 header 格式。如有异常，用 col_types 手动覆盖
+> 6. **"月份"误判检查**：列名含"月份"已从 date 关键词白名单中移除。如果列含实际 datetime 数据，值分析阶段仍会正确识别。如果仍有误判，用 col_types={'月份': 'text'} 覆盖
+> 7. **"率"结尾的排除词检查**：列名恰为"汇率/利率/速率/费率/税率/倍率/概率/频率/功率"时不判 pct（应判 number/money，由值特征兜底）。"毛利率/完成率/增长率"等比率词仍判 pct
+> 8. **bool 列检查**：True/False 列不会被当作 number（用 #,##0 会显示成 1/0），已按 text 处理
 >
 > 类型推断永远可以靠 `col_types={'列名': '类型'}` 覆盖。不要接受推断结果不加验证。
 
-### 条件格式自适应
+### 条件格式自适应（需用户选择）
 
-从 v2.1 开始，`beautify` 会自动检测已有文件中的 **colorScale 色阶条件格式**，并将其最大色（高值色）替换为当前主题的表头色，使条件格式与整体配色统一。
+从 v2.3 起，`beautify` **默认不再自动改色阶**（`color_scale='auto'`，保留原语义色）。因为色阶往往有语义（"越高越绿=好"），强行替换最大色为表头色会误导数据解读。仅当用户明确要求"配色统一"时才设 `color_scale='apply'`。
 
+- `color_scale`：`auto`（默认，保留）/ `apply`（改为主题色）/ `off`（跳过）
+- `color_scale_scope`：`data`（只改数据区色阶，默认）/ `all`（改整个表色阶）
 - 支持 2 色/3 色色阶（替换最后一个颜色）
 - 数据条(dataBar)、图标集(iconSet)等其他条件格式不受影响
 - make_excel 模式新建文件无历史条件格式，不执行此步骤
+
+```python
+# 明确要求配色统一 → 只改数据区色阶
+beautify('报表.xlsx', color_scale='apply', color_scale_scope='data')
+
+# 默认值：不破坏语义色
+beautify('报表.xlsx')   # color_scale='auto'
+```
+
+### 按工作簿隔离列类型
+
+从 v2.3 起，`beautify` 支持 `col_types_by_sheet`，按工作表名称隔离列类型覆盖，避免不同 sheet 的同名列语义不同（如 Sheet1"金额"是 money、Sheet2"金额"是文本编码）被同一份全局覆盖误伤。
+
+```python
+beautify('多表.xlsx', col_types_by_sheet={'明细': {'金额': 'money'}, '汇总': {'金额': 'text'}})
+```
 
 ## 参考文件
 
 - `references/type-inference-rules.md` — 列类型推断关键词规则和优先级
 - `references/implementation-checklist.md` — 交付前逐项验证清单
 - `references/dual-header-format.py` — 双表头/多数据块布局手工格式脚本
-- `references/camera-screenshot-white-bg.md` — Excel 照相机截图白底修正方案
-- `test-prompts.json` — 类型推断/美化/万元单位的测试用例（含预期结果）
-
-> Excel 照相机截图流程和指定列打码见同分类下的 `excel-screenshot-blur` skill。
 
 ## 摩根系标准 — 9 大原则（来自《为什么精英都是Excel控》）
 
@@ -242,6 +277,25 @@ beautify('输入.xlsx', '输出.xlsx', theme='warm-sun')
 4. **单文件** — 一个 script 解决所有，不搞模块拆分配置继承。要加功能也用函数追加在文件末尾。
 5. **基座 skill 职责分离** — excel-master 是「基座」skill，提供可配置的选项（如 `theme` 参数），高层脚本（如千川投流）按需选择。**不动基座只改上层脚本**——基座的配色、行为应作为参数暴露，应用层直接传参调用。保持基座与应用层的职责分离。
 
+## 自动化接入（1000 行门禁）
+
+用户规则（2026-08-07）：**≤1000 行的 Excel 产出默认先经 excel-master 美化再交付**。已同步到 AGENTS.md 与 MEMORY.md。
+
+统一入口：`D:\opencode_files\scripts\excel\excel_beautify.py`（应用层包装脚本，不改基座代码）
+
+```bash
+python D:/opencode_files/scripts/excel/excel_beautify.py 报表.xlsx
+python D:/opencode_files/scripts/excel/excel_beautify.py 报表.xlsx --theme coral --freeze-rows 2
+python D:/opencode_files/scripts/excel/excel_beautify.py 报表.xlsx --col-types 订单号:text 金额:money
+```
+
+行为约定：
+1. 行数门禁：所有 sheet 的 `max_row` ≤1000 才美化，超限跳过（exit code 2）并保留原文件
+2. 结构预检：检测合并单元格表头、月份/期间列名等易误判点，输出 WARN 但不阻断
+3. 安全兜底：美化前备份原文件到 `D:\opencode_files\temp\excel_beautify_backup_<ts>\`，失败自动回退（exit code 3）
+4. 原地美化：输出与输入同名，不改变上层的时间戳命名/落盘路径
+5. 交互豁免：程序化调用不走 skill 的「问 2 个问题」流程，直接默认值（水蓝主题 + 自动表头推断）；agent 人工产出时仍按交互流程收集 theme/freeze_rows
+
 ## 失败模式与恢复（三段式 Fallback 表）
 
 > 所有失败模式按「触发条件 → 一线修复 → 兜底方案」三层结构编码。
@@ -255,12 +309,14 @@ beautify('输入.xlsx', '输出.xlsx', theme='warm-sun')
 | 4 | theme 参数写错（如 `corol` 而非 `coral`） | make_excel/beautify 入口已校验 `if theme not in THEMES: raise ValueError`，会报错中断而非静默回退 | 检查 theme 名拼写，可用 `sorted(THEMES.keys())` 查看完整列表 |
 | 5 | beautify 时首行不是表头（有备注行/空行在前面） | `_detect_data_range()` 从第 1 个非空行开始。跑前确认第 1 个非空行就是表头 | 用 `make_excel()` 从 DataFrame 重建，不走 beautify |
 | 6 | 工作表名超 31 字符或含非法字符 `\\/ * ? : [ ]` | 代码自动截断 31 字符并替换非法字符为 `_`。检查截断后是否与其他表名冲突 | 手动重命名其中一个 sheet，避免前 31 字符重复 |
-| 7 | beautify 遇到双表头布局（Row2 大标题 + Row3 列头 + 后续第二组列头） | beautify 不支持纵向双表头。立即回退到自动备份 `*_backup_*.xlsx` | 用 openpyxl 手工脚本逐段控制格式，见 `references/dual-header-format.py` |
+|| 7 | beautify 遇到双表头布局（Row2 大标题 + Row3 列头 + 后续第二组列头） | beautify 已内置合并单元格自动检测：扫描 header_row 的列，如果某个列的 header_value 为 None 而下一行有值，自动切换为子表头模式——用子表头文字做类型推断，并对子表头行应用 header 格式。确认版本 ≥ 2026-07-04 | 如果自动检测结果仍不理想，用 `col_types` 为每列逐一指定类型，或用 `references/dual-header-format.py` 手工脚本精确控制 |
 | 8 | beautify 遇到 Formula 对象导致列宽失控（DataTableFormula/ArrayFormula） | 代码已有 `_cell_display_text()` 保护，不会出现内存地址撑宽列宽。若列宽仍异常，确认编辑器版本 ≥ 2026-06-22 | 手动 `ws.column_dimensions[col].width = 15` |
 | 9 | beautify 中 `is_summary` 报 `UnboundLocalError` | 2026-06-13 已修复：从 4.5 段前提取检测逻辑，与 5 段共用。确认版本 ≥ 该日期 | 回退备份，确保 `is_summary` 在引用前定义 |
 | 10 | CSV 调用 `python3` 而非 `python` | Windows 上 `python3` 不可用。CLI 示例均使用 `python` | 用 `python` 替换 `python3` |
 | 11 | 万元单位（0~1 的 float）被误判为 pct | 2026-06-22 已改为：百分比只靠列名关键词推断，float 一律判 money。确认该列列名不含"率/占比/百分比" | 用 `col_types={'列名': 'money'}` 强制指定 |
 | 12 | beautify 后公式颜色配错（应为黑色但显示蓝色） | 2026-06-22 修复：用 `_cell_display_text(cell).startswith('=')` 统一检测公式。确认非 `DataTableFormula` 对象 | 手动设置 `cell.font = DATA_FONT_BLACK` |
+| 13 | beautify 遇到合并单元格表头（merged cells 如 Row2 大标题 "实际数据" 合并 B-C 列），导致被覆盖列（C 列）的 header_value 为 None，类型推断退化为纯值采样 | beautify 前用 openpyxl 的 `ws.merged_cells.ranges` 扫描合并单元格区域，对 header_row 中被合并覆盖的列标记为 `header_value = None` 并告警。**不会静默输出**——前置检测发现 merged cells 覆盖表头行时，输出警告并建议用 `col_types` 手动覆盖 | 回退备份，用 `col_types` 为每列逐一指定类型，或用 `references/dual-header-format.py` 手工脚本 |
+| 14 | beautify/make_excel 遇到列名含"月份""期间"等业务术语时，**误判为 date**。列名含"月份"会触发 `(月份|date|month)` 关键词匹配，但实际内容为文本标签（"1月""2026-01"），不是有效日期 | 日期关键词排除白名单：`^(?!.*(?:月份|期间|period|会计期间)).*$` 可减少误伤。更稳妥的做法：确认该列值是否为有效日期（`pd.to_datetime(..., errors='coerce')` 的 NaN 比例 > 50% 则回退为 text） | 用 `col_types={'月份': 'text'}` 或 `col_types={'期间': 'text'}` 强制覆盖 |
 
 ### 代码级失败恢复（运行时）
 
@@ -269,7 +325,8 @@ beautify('输入.xlsx', '输出.xlsx', theme='warm-sun')
 | beautify 修改出错 | 自动生成 `*_backup_*.xlsx` 备份，可回退 |
 | theme 不存在 | 显式抛出 `ValueError`（不会静默回退） |
 | 类型推断不准 | 提供 `col_types_override` / `fmt_override` 两重手动覆盖参数 |
-| 数据范围检测偏移 | `freeze_rows` 参数可手动指定冻结行，绕过自动推断 |
+|| 数据范围检测偏移 | `freeze_rows` 参数可手动指定冻结行，绕过自动推断 |
+|| beautify 扫描大文件 | max_row 已设安全上限（MAX_SCAN_ROWS=10000），防止误操作导致的 100万行扫描。超大文件（>10000 行）仍推荐用 `make_excel` 分段生成 |
 
 ## 反例与黑名单
 
@@ -287,7 +344,10 @@ beautify('输入.xlsx', '输出.xlsx', theme='warm-sun')
 | 8 | 不验证 theme 参数有效性 | 写错的 theme 名（如 `coral` 拼成 `corol`）会静默回退到 default 水蓝，完全没有出错提示 | 在入口处显式校验 `if theme not in THEMES: raise ValueError` |
 | 9 | 用 beautify 处理双表头/多数据块布局 | beautify 只做首行检测+单一连续数据区域，Row3+实际列头被跳过、空行区域被加框线 | 恢复备份，用手工脚本精确控制每段格式 |
 | 10 | 在 beautify 中对 Formula 对象用 str() 提取文本 | DataTableFormula/ArrayFormula 的 str() 返回内存地址（如 `<openpyxl.worksheet.formula.DataTableFormula at 0x...>`），导致列宽被撑到 MAX_COL_WIDTH | 用 `_cell_display_text(cell)` 安全提取：常规值返回自身、公式对象取 `.value`、DataTable 返回空 |
-| 11 | 对万元/千元单位的小数值表使用 beautify | **[已修复]** beautify 此前有值分析 0~1 → pct 的回退逻辑，会误判万元单位。2026-06-22 已改为百分比只靠列名关键词，值分析不再回退 pct | 如果列名不含 pct 关键词（率/占比等），beautify 现在会正确判为 money，不再需要绕行 |
+|| 11 | 对万元/千元单位的小数值表使用 beautify | **[已修复]** beautify 此前有值分析 0~1 → pct 的回退逻辑，会误判万元单位。2026-06-22 已改为百分比只靠列名关键词，值分析不再回退 pct | 如果列名不含 pct 关键词（率/占比等），beautify 现在会正确判为 money，不再需要绕行 |
+| 12 | 列名含"月份"但值是文本标签，不做 col_types 覆盖 | 美化后的报表中"月份"列显示为 yyyy/mm/dd 格式，实际值"1月""2026-01"在 Excel 中显示为日期或乱码。 | 从 v2.2 起"月份"已从 date 关键词移除，自动推断为 text。如果仍有误判，用 `col_types={'月份': 'text'}` 覆盖 |
+| 13 | beautify 双表头未知底直接退备份而不先试自动检测 | 合并单元格表头下，被覆盖列（如 C2 在 B2:C2 合并区域内）value 为 None→类型推断退化。 | 从 v2.2 起 `_detect_sub_headers` 自动检测并用于表头推断，同时子表头行（Row3）应用 header 格式。先运行 beautify，不行再回退到手工程 |
+| 14 | beautify col_types 传入无效值（如 `{'列名': 'invalid'}`） | 静默接受无效值导致该列无 number_format，误以为覆盖成功 | 从 v2.2 起 `_beautify_worksheet` 校验 col_types 值有效性，抛出 ValueError |
 
 > **🔴 CHECKPOINT · 🛑 DELIVERY GATE** — 文件交付给用户前，逐项验证：
 > 1. 打开 xlsx，目测所有列的格式是否基本对（尤其是小数列和百分数列不分岔）

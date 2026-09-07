@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+
+# 备份与临时文件
+*_backup_*.xlsx
+*_backup_manual.xlsx
+*.tmp
